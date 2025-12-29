@@ -1,10 +1,10 @@
 import asyncio
-from client import NearClient, ClientError, RpcError, HttpError
+from client import NearClientAsync, ClientError, RpcError, HttpError
 from client.errors import RequestTimeoutError
 
 
 async def main():
-    client = NearClient(base_url="https://rpc.mainnet.near.org")
+    client = NearClientAsync(base_url="https://rpc.mainnet.near.org")
 
     try:
         status = await client.status()

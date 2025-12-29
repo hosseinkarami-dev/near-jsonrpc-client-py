@@ -1,13 +1,13 @@
 import asyncio
-from client import NearClient, ClientError, RpcError, HttpError
+from client import NearClientSync, ClientError, RpcError, HttpError
 from client.errors import RequestTimeoutError
 
 
-async def main():
-    client = NearClient(base_url="https://rpc.mainnet.near.org")
+def main():
+    client = NearClientSync(base_url="https://rpc.mainnet.near.org")
 
     try:
-        config = await client.genesis_config()
+        config = client.genesis_config()
         print("Genesis config:", config)
 
     except RpcError as e:
@@ -18,7 +18,7 @@ async def main():
         print("Invalid response:", e)
 
     try:
-        config = await client.client_config()
+        config = client.client_config()
         print("Client config:", config)
 
     except RpcError as e:
@@ -30,7 +30,7 @@ async def main():
     except ClientError as e:
         print("Invalid response:", e)
 
-    await client.close()
+    client.close()
 
 
-asyncio.run(main())
+main()

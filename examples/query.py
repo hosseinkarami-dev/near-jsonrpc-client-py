@@ -1,11 +1,11 @@
 import asyncio
-from client import NearClient, ClientError, RpcError, HttpError
+from client import NearClientAsync, ClientError, RpcError, HttpError
 from client.errors import RequestTimeoutError
 from models import RpcQueryRequest, AccountId, FunctionArgs
 from models.rpc_query_request import RpcQueryRequestCallFunctionByFinality
 
 async def main():
-    client = NearClient(base_url="https://rpc.mainnet.near.org")
+    client = NearClientAsync(base_url="https://rpc.mainnet.near.org")
 
     try:
         params = RpcQueryRequest(

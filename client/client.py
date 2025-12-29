@@ -1,7 +1,13 @@
-from .base_client import NearBaseClient
-from .api_methods import APIMixin
+from .api_methods_async import APIMixinAsync
+from .api_methods_sync import APIMixinSync
+from .base_client import NearBaseClientAsync, NearBaseClientSync
 
 
-class NearClient(NearBaseClient, APIMixin):
-    """NearClient with generated methods mixed-in."""
+class NearClientAsync(NearBaseClientAsync, APIMixinAsync):
+    """NearClientAsync with generated API methods mixed in."""
+    pass
+
+
+class NearClientSync(NearBaseClientSync, APIMixinSync):
+    """NearClientSync with generated API methods mixed in."""
     pass

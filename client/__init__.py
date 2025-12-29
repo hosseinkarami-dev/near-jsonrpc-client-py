@@ -1,6 +1,9 @@
-from .client import NearClient
-from .base_client import NearBaseClient
-from .transport import HttpTransport
+from .api_methods_async import APIMixinAsync
+from .api_methods_sync import APIMixinSync
+from .base_client import (NearBaseClientSync, NearBaseClientAsync)
+from .client import NearClientAsync, NearClientSync
+
+from .transport import (HttpTransportAsync, HttpTransportSync)
 from .errors import (
     ClientError,
     TransportError,
@@ -9,11 +12,16 @@ from .errors import (
 )
 
 __all__ = [
-    "NearClient",
+    "NearClientAsync",
+    "NearClientSync",
     "ClientError",
     "TransportError",
     "HttpError",
-    "HttpTransport",
+    "HttpTransportAsync",
+    "HttpTransportSync",
     "RpcError",
-    "NearBaseClient"
+    "NearBaseClientSync",
+    "NearBaseClientAsync",
+    "APIMixinAsync",
+    "APIMixinSync"
 ]

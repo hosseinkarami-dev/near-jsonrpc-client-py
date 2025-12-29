@@ -28,7 +28,8 @@ class ApiGenerator:
         schemas: Mapping[str, Any] = ctx.schemas
         paths: Mapping[str, Any] = ctx.paths
 
-        methods: List[str] = []
+        methods_async: List[str] = []
+        methods_sync: List[str] = []
         for path, path_item in sorted(paths.items()):
             if not isinstance(path_item, dict):
                 continue
@@ -73,33 +74,47 @@ class ApiGenerator:
                     return_type_hint=return_type_hint,
                     operation_id=operation_id,
                     use_model_validate_none=use_model_validate_none,
+                    is_async=True
                 )
 
-                # اضافه کردن indentation مناسب برای قرار گرفتن داخل کلاس
                 method_src_indented = textwrap.indent(method_src, '    ')
-                methods.append(method_src_indented)
+                methods_async.append(method_src_indented)
+
+                method_src = ApiGenerator._render_method(
+                    method_name=method_name,
+                    description=description,
+                    models_module=models_module,
+                    request_model_class=request_model_class,
+                    response_model_class=response_model_class,
+                    params_class_name=params_class_name,
+                    return_type_hint=return_type_hint,
+                    operation_id=operation_id,
+                    use_model_validate_none=use_model_validate_none,
+                    is_async=False
+                )
+
+                method_src_indented = textwrap.indent(method_src, '    ')
+                methods_sync.append(method_src_indented)
 
         api_methods_content = ApiGenerator._render_api_module(
             models_module=models_module,
-            methods=methods,
+            methods=methods_async,
             base_client_module=base_client_module,
+            is_async=True
         )
-        api_methods_path = output_dir / "api_methods.py"
+        api_methods_path = output_dir / "api_methods_async.py"
         api_methods_path.write_text(api_methods_content, encoding="utf-8")
 
-        client_py_path = output_dir / "client.py"
-        base_import_line = f"from .{base_client_module} import NearBaseClient"
-        if not client_py_path.exists():
-            content = textwrap.dedent(f"""{base_import_line}
-from .api_methods import APIMixin
+        api_methods_content = ApiGenerator._render_api_module(
+            models_module=models_module,
+            methods=methods_sync,
+            base_client_module=base_client_module,
+            is_async=False
+        )
+        api_methods_path = output_dir / "api_methods_sync.py"
+        api_methods_path.write_text(api_methods_content, encoding="utf-8")
 
-class NearClient(NearBaseClient, APIMixin):
-    \"\"\"NearClient with generated API methods mixed in.\"\"\"
-    pass
-""")
-            client_py_path.write_text(content, encoding="utf-8")
-
-        print(f"✅ [ApiGenerator] Wrote {api_methods_path} and patched {client_py_path}")
+        print(f"✅ [ApiGenerator] Wrote {api_methods_path}")
 
     # ---- helpers ----
     @staticmethod
@@ -174,19 +189,25 @@ class NearClient(NearBaseClient, APIMixin):
         return_type_hint: str,
         operation_id: str,
         use_model_validate_none: bool,
+        is_async: bool
+
     ) -> str:
         doc = (description or f"Call {operation_id}").strip()
         safe_doc = doc.replace('"""', '\\"\\"\\"')
 
+        async_prefix = "async " if is_async else ""
+        await_prefix = "await " if is_async else ""
+        self_annotation = 'NearBaseClientAsync' if is_async else 'NearBaseClientSync'
+
         if use_model_validate_none:
             method = f'''
-async def {method_name}(self: "NearBaseClient") -> {return_type_hint}:
+{async_prefix}def {method_name}(self: {self_annotation}) -> {return_type_hint}:
     """
     {safe_doc}
     High-level method: returns the result model or raises NearClientError/NearRpcError/NearHttpError.
     """
     params = {models_module}.{params_class_name}.model_validate(None)
-    return await self._call(
+    return {await_prefix}self._call(
         request_model={models_module}.{request_model_class},
         response_model={models_module}.{response_model_class},
         params=params,
@@ -194,12 +215,12 @@ async def {method_name}(self: "NearBaseClient") -> {return_type_hint}:
 '''
         else:
             method = f'''
-async def {method_name}(self: "NearBaseClient", *, params: {models_module}.{params_class_name}) -> {return_type_hint}:
+{async_prefix}def {method_name}(self: {self_annotation}, *, params: {models_module}.{params_class_name}) -> {return_type_hint}:
     """
     {safe_doc}
     High-level method: returns the result model or raises NearClientError/NearRpcError/NearHttpError.
     """
-    return await self._call(
+    return {await_prefix}self._call(
         request_model={models_module}.{request_model_class},
         response_model={models_module}.{response_model_class},
         params=params,
@@ -208,23 +229,28 @@ async def {method_name}(self: "NearBaseClient", *, params: {models_module}.{para
         return method
 
     @staticmethod
-    def _render_api_module(*, models_module: str, methods: List[str], base_client_module: str) -> str:
-        header = textwrap.dedent(f'''\
-            """Auto-generated API mixin (generated by ClientGenerator).
+    def _render_api_module(*, models_module: str, methods: List[str], base_client_module: str, is_async) -> str:
+        if is_async:
+            client_class_name = "NearBaseClientAsync"
+            mixin_class_name = "APIMixinAsync"
+        else:
+            client_class_name = "NearBaseClientSync"
+            mixin_class_name = "APIMixinSync"
 
-            This file contains APIMixin which provides generated API methods.
-            The runtime provides a NearBaseClient implementation (located in '{base_client_module}')
+        header = textwrap.dedent(f'''\
+            """Auto-generated API mixin (generated by ApiGenerator).
+
+            This file contains {mixin_class_name} which provides generated API methods.
+            The runtime provides a {client_class_name} implementation (located in '{base_client_module}')
             that exposes `_call(...)`.
             """
         ''')
         imports = textwrap.dedent(f'''\
-            from typing import TYPE_CHECKING
-            if TYPE_CHECKING:
-                from .{base_client_module} import NearBaseClient
+            from .{base_client_module} import {client_class_name}
 
             import {models_module}
         ''')
-        class_def = "class APIMixin:\n\n"
+        class_def = f"class {mixin_class_name}:\n\n"
         class_body = "    pass\n" if not methods else "".join(methods)
         return "\n\n".join([header, imports, class_def + class_body])
 

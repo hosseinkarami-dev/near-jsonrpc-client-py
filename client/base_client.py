@@ -2,6 +2,7 @@ from typing import Type
 from uuid import uuid4
 
 import httpx
+import requests
 from pydantic import BaseModel
 from typing import get_args
 
@@ -12,10 +13,10 @@ from .errors import (
     RpcError,
     RequestTimeoutError,
 )
-from .transport import HttpTransport
+from .transport import HttpTransportAsync, HttpTransportSync
 
 
-def _extract_method(request_model: type[BaseModel]) -> str:
+def _extract_method(request_model: Type[BaseModel]) -> str:
     field = request_model.model_fields.get("method")
     if field is None:
         raise ClientError(
@@ -31,7 +32,21 @@ def _extract_method(request_model: type[BaseModel]) -> str:
     return args[0]
 
 
-class NearBaseClient:
+def _parse_response(response_model: Type[BaseModel], response_json: dict):
+    """Shared response parsing and error handling."""
+    try:
+        parsed = response_model.model_validate(response_json)
+    except Exception as e:
+        raise ClientError("Invalid response format") from e
+
+    inner = parsed.root
+    if hasattr(inner, "error") and inner.error is not None:
+        raise RpcError(inner)
+    return inner.result
+
+
+# ===================== Async Client =====================
+class NearBaseClientAsync:
     def __init__(
         self,
         *,
@@ -39,10 +54,8 @@ class NearBaseClient:
         timeout: float = 10.0,
         headers: dict[str, str] | None = None,
     ):
-        self._transport = HttpTransport(
-            base_url=base_url,
-            timeout=timeout,
-            headers=headers,
+        self._transport = HttpTransportAsync(
+            base_url=base_url, timeout=timeout, headers=headers
         )
 
     async def _call(
@@ -53,7 +66,6 @@ class NearBaseClient:
         params: BaseModel,
         debug=False
     ):
-
         request = request_model(
             jsonrpc="2.0",
             id=str(uuid4()),
@@ -63,15 +75,12 @@ class NearBaseClient:
 
         payload = request.model_dump(by_alias=True)
         if debug:
-            print("➡️ JSON-RPC Request payload:")
-            print(payload)
+            print("➡️ JSON-RPC Request payload:", payload)
 
         try:
             response = await self._transport.post(json=payload)
-
             if debug:
-                print("⬅️ JSON-RPC Raw Response:")
-                print(response.text)
+                print("⬅️ JSON-RPC Raw Response:", response.text)
 
         except httpx.TimeoutException as e:
             raise RequestTimeoutError() from e
@@ -79,22 +88,61 @@ class NearBaseClient:
             raise TransportError(str(e)) from e
 
         if 500 <= response.status_code < 600:
-            raise HttpError(
-                status_code=response.status_code,
-                body=response.text,
-            )
+            raise HttpError(status_code=response.status_code, body=response.text)
 
-        try:
-            parsed = response_model.model_validate(response.json())
-        except Exception as e:
-            raise ClientError("Invalid response format") from e
-
-        inner = parsed.root
-
-        if hasattr(inner, "error"):
-            raise RpcError(inner)
-
-        return inner.result
+        return _parse_response(response_model, response.json())
 
     async def close(self):
         await self._transport.close()
+
+
+# ===================== Sync Client =====================
+class NearBaseClientSync:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        timeout: float = 10.0,
+        headers: dict[str, str] | None = None,
+    ):
+        self._transport = HttpTransportSync(
+            base_url=base_url, timeout=timeout, headers=headers
+        )
+
+    def _call(
+        self,
+        *,
+        request_model: Type[BaseModel],
+        response_model: Type[BaseModel],
+        params: BaseModel,
+        debug=False
+    ):
+        request = request_model(
+            jsonrpc="2.0",
+            id=str(uuid4()),
+            method=_extract_method(request_model),
+            params=params,
+        )
+
+        payload = request.model_dump(by_alias=True)
+        if debug:
+            print("➡️ JSON-RPC Request payload:", payload)
+
+        try:
+            response = self._transport.post(json=payload)
+            if debug:
+                print("⬅️ JSON-RPC Raw Response:", response.text)
+
+        # handle sync transport exceptions (requests or httpx sync)
+        except requests.Timeout as e:
+            raise RequestTimeoutError() from e
+        except requests.RequestException as e:
+            raise TransportError(str(e)) from e
+
+        if 500 <= response.status_code < 600:
+            raise HttpError(status_code=response.status_code, body=response.text)
+
+        return _parse_response(response_model, response.json())
+
+    def close(self):
+        self._transport.close()
