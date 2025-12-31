@@ -311,18 +311,25 @@ jobs:
         if: steps.create_tag_api.outputs.tag_created == 'true'
         env:
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-          PACKAGE_VERSION: ${{ steps.create_tag_api.outputs.created_tag }}
+          PACKAGE_TAG: ${{ steps.create_tag_api.outputs.created_tag }}
         run: |
           set -euo pipefail
           git fetch origin --tags --force
           git checkout main
           git reset --hard origin/main
       
+          PACKAGE_VERSION=${PACKAGE_TAG#v}
+          echo "Using version $PACKAGE_VERSION for PyPI"
+      
+          sed -i "s/^version = \".*\"/version = \"$PACKAGE_VERSION\"/" pyproject.toml
+      
           python -m pip install --upgrade pip
           python -m pip install build twine
       
           python -m build --sdist --wheel
+      
           python -m twine upload --non-interactive -u __token__ -p "${PYPI_API_TOKEN}" dist/*
+
 
 
       - name: Final output
