@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 from generator.context import GeneratorContext
-from generator.helpers.name_resolvers import snake_case, pascal_case, _make_safe_class_name
+from generator.helpers.name_resolvers import snake_case, pascal_case, to_class_name
 
 # numeric bounds
 _INT32_MIN = -2_147_483_648
@@ -355,7 +355,7 @@ def get_python_type_and_string(
 
         if isinstance(items, dict) and items.get("type") == "object" and "properties" in items:
             root = parent_name if parent_name else pascal_case(field or "Anon")
-            item_class = _make_safe_class_name(root, f"{field.capitalize()}Item")
+            item_class = to_class_name(root, f"{field.capitalize()}Item")
             nested_defs: List[str] = []
             class_def = _build_class_from_properties(item_class, items.get("properties", {}), items.get("required", []),
                                                      ctx, imports, extra_defs=nested_defs,
@@ -390,7 +390,7 @@ def get_python_type_and_string(
             if root.endswith(field_pc):
                 cls_name = f"{root}Payload"
             else:
-                cls_name = _make_safe_class_name(root, field)
+                cls_name = to_class_name(root, field)
 
             nested_defs: List[str] = []
             # determine strictness for this object
@@ -662,7 +662,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     if candidates:
                         suffix = pascal_case(candidates[0])
                 suffix = suffix or f"Option{idx}"
-                combined = _make_safe_class_name(pascal_case(schema_name), suffix)
+                combined = to_class_name(pascal_case(schema_name), suffix)
                 combined = _ensure_unique_name(combined, used_class_names)
                 local_nested: List[str] = []
                 merged_required_list = list(merged_required)
@@ -696,7 +696,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 vals = opt["enum"]
                 raw = vals[0] if vals else f"Option{idx}"
                 suffix = pascal_case(str(raw))
-                alias_name = _make_safe_class_name(pascal_case(schema_name), suffix)
+                alias_name = to_class_name(pascal_case(schema_name), suffix)
                 alias_name = _ensure_unique_name(alias_name, used_class_names)
                 imports.add("from pydantic import RootModel")
                 imports.add("from typing import Literal")
@@ -723,7 +723,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     suffix = pascal_case(title)
                 else:
                     suffix = ref
-                combined = _make_safe_class_name(pascal_case(schema_name), suffix)
+                combined = to_class_name(pascal_case(schema_name), suffix)
                 combined = _ensure_unique_name(combined, used_class_names)
                 imports.add(f"from models.{snake_case(ref)} import {ref}")
                 local_nested: List[str] = []
@@ -787,7 +787,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                         suffix = pascal_case(candidates[0])
 
                 suffix = suffix or f"Option{idx}"
-                combined = _make_safe_class_name(pascal_case(schema_name), suffix)
+                combined = to_class_name(pascal_case(schema_name), suffix)
                 combined = _ensure_unique_name(combined, used_class_names)
                 local_nested: List[str] = []
                 strict_opt = opt.get("additionalProperties") is False
@@ -856,7 +856,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 suffix = pascal_case(title)
             else:
                 suffix = f"Option{idx_local}"
-            alias_candidate = _make_safe_class_name(pascal_case(schema_name), suffix)
+            alias_candidate = to_class_name(pascal_case(schema_name), suffix)
             alias_candidate = _ensure_unique_name(alias_candidate, used_class_names)
             if alias_candidate in used_aliases:
                 alias_candidate = _ensure_unique_name(alias_candidate, used_class_names)
@@ -966,7 +966,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     suffix = pascal_case(title)
                 else:
                     suffix = ref
-                alias_candidate = _make_safe_class_name(pascal_case(schema_name), suffix)
+                alias_candidate = to_class_name(pascal_case(schema_name), suffix)
                 alias_candidate = _ensure_unique_name(alias_candidate, used_class_names)
                 if alias_candidate in used_aliases:
                     alias_candidate = _ensure_unique_name(alias_candidate, used_class_names)
@@ -1012,7 +1012,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     suffix = pascal_case(title)
                 else:
                     suffix = f"Option{idx}"
-                inline_name = _make_safe_class_name(pascal_case(schema_name), suffix)
+                inline_name = to_class_name(pascal_case(schema_name), suffix)
                 inline_name = _ensure_unique_name(inline_name, used_class_names)
                 nested: List[str] = []
                 strict_opt = opt.get("additionalProperties") is False

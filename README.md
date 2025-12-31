@@ -17,7 +17,6 @@ A **type-safe**, Pythonic client for the NEAR Protocol JSON-RPC API.
 * [Quickstart](#-quickstart)
 * [Basic Usage](#-basic-usage)
 * [Handling Responses & Errors](#-handling-responses--errors)
-* [Async Usage](#-async-usage)
 * [Testing](#-testing)
 * [Contributing](#-contributing)
 * [License](#-license)
@@ -178,16 +177,6 @@ except RequestTimeoutError as e:
 except ClientError as e:
     print("Invalid response", e)
 ```
-
----
-
-## ⚡ Async Usage
-
-* Use `NearClientAsync`.
-* Use `await` for all RPC method calls.
-* Remember to call `await client.close()` to properly close connections.
-
----
 
 ---
 

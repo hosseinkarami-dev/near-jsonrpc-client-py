@@ -10,7 +10,7 @@ def snake_case(schema_name: str) -> str:
     return schema_name
 
 
-def _make_safe_class_name(root: str, suffix: str) -> str:
+def to_class_name(root: str, suffix: str) -> str:
     if re.fullmatch(r'[A-Z0-9_]+', suffix):
         parts = suffix.lower().split('_')
         suffix_safe = ''.join(p.capitalize() for p in parts)
