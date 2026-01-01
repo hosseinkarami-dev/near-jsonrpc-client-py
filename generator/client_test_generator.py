@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import re
 import textwrap
 from pathlib import Path
 from typing import Any, Mapping, Optional, List
 
-from .context import GeneratorContext
 from generator.helpers.name_resolvers import snake_case, pascal_case
+from .context import GeneratorContext
 
 
 def ref_name(ref: str) -> str:
@@ -20,7 +19,7 @@ class ClientTestGenerator:
         ctx: GeneratorContext,
         *,
         output_dir: Path = Path("tests"),
-        models_module: str = "models",
+        models_module: str = "near_jsonrpc_models",
         client_module: str = "client",
         rpc_base_url: str = "https://rpc.test",
     ) -> None:
@@ -267,7 +266,7 @@ class ClientTestGenerator:
                     return json.load(fh)
 
             def _normalize(obj):
-                \"\"\"Recursively convert pydantic models (and lists/dicts containing them)
+                \"\"\"Recursively convert pydantic near_jsonrpc_models (and lists/dicts containing them)
                 to JSON-serializable Python primitives comparable with fixture JSON.
 
                 Rules:

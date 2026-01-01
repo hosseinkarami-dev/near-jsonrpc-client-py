@@ -94,8 +94,9 @@ pip install near-jsonrpc-client httpx pydantic
 
 ```python
 import asyncio
-from client import NearClientAsync
-from models import RpcBlockRequest, BlockId, RpcBlockRequestBlockId, BlockIdBlockHeight
+from near_jsonrpc_client import NearClientAsync
+from near_jsonrpc_models import RpcBlockRequest, BlockId, RpcBlockRequestBlockId, BlockIdBlockHeight
+
 
 async def main():
     client = NearClientAsync(base_url="https://rpc.mainnet.near.org")
@@ -111,14 +112,15 @@ async def main():
 
     await client.close()
 
+
 asyncio.run(main())
 ```
 
 ### Sync Client
 
 ```python
-from client import NearClientSync
-from models import RpcBlockRequest, BlockId, RpcBlockRequestBlockId, BlockIdBlockHeight
+from near_jsonrpc_client import NearClientSync
+from near_jsonrpc_models import RpcBlockRequest, BlockId, RpcBlockRequestBlockId, BlockIdBlockHeight
 
 client = NearClientSync(base_url="https://rpc.mainnet.near.org")
 
@@ -143,7 +145,7 @@ client.close()
 * Receive typed response models.
 
 ```python
-from models import RpcBlockRequest, RpcBlockRequestBlockId, BlockIdBlockHeight, BlockId
+from near_jsonrpc_models import RpcBlockRequest, RpcBlockRequestBlockId, BlockIdBlockHeight, BlockId
 
 params = RpcBlockRequest(RpcBlockRequestBlockId(block_id=BlockId(BlockIdBlockHeight(178682261))))
 response = client.block(params=params)

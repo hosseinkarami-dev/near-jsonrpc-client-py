@@ -1,5 +1,5 @@
-from .api_methods_async import APIMixinAsync
-from .api_methods_sync import APIMixinSync
+from near_jsonrpc_client.api_methods_async import APIMixinAsync
+from near_jsonrpc_client.api_methods_sync import APIMixinSync
 from .base_client import NearBaseClientAsync, NearBaseClientSync
 
 

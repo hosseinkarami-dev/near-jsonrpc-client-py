@@ -1,9 +1,7 @@
 import asyncio
-from client import NearClientAsync, ClientError, RpcError, HttpError
-from client.errors import RequestTimeoutError
-from models import RpcBlockRequest, BlockId, CryptoHash
-from models.block_id import BlockIdBlockHeight, BlockIdCryptoHash
-from models.rpc_block_request import RpcBlockRequestBlockId
+from near_jsonrpc_client import NearClientAsync, ClientError, RpcError, HttpError, RequestTimeoutError
+from near_jsonrpc_models import RpcBlockRequest, BlockId, CryptoHash, BlockIdBlockHeight, BlockIdCryptoHash, \
+    RpcBlockRequestBlockId
 
 
 async def main():

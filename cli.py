@@ -15,7 +15,7 @@ def main():
     spec = load_openapi(OPENAPI_URL)
     ctx = GeneratorContext(spec)
 
-    model_generator.generate_models(ctx)
+    model_generator.generate_models(ctx=ctx, models_dir="near_jsonrpc_models")
 
     samples_dir = Path("tests/fixtures/json")
     MockGenerator.generate(ctx, [samples_dir])
@@ -25,13 +25,13 @@ def main():
         output_dir=Path("tests"),
     )
 
-    ApiGenerator.generate(ctx, output_dir=Path("client"), models_module="models")
+    ApiGenerator.generate(ctx, output_dir=Path("near_jsonrpc_client"), models_module="near_jsonrpc_models")
 
     ClientTestGenerator.generate(
         ctx,
         output_dir=Path("tests"),
-        models_module="models",
-        client_module="client",
+        models_module="near_jsonrpc_models",
+        client_module="near_jsonrpc_client",
         rpc_base_url="https://rpc.mainnet.near.org",
     )
 

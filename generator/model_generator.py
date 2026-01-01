@@ -1,7 +1,9 @@
+import ast
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, Optional, Set
+from typing import List, Tuple
 
 from generator.context import GeneratorContext
 from generator.helpers.name_resolvers import snake_case, pascal_case, to_class_name
@@ -191,7 +193,7 @@ def get_python_type_and_string(
             0]:
             ref = field_data["allOf"][0]["$ref"]
             model_name = pascal_case(ref.split("/")[-1])
-            imports.add(f"from models.{snake_case(model_name)} import {model_name}")
+            imports.add(f"from near_jsonrpc_models.{snake_case(model_name)} import {model_name}")
             return model_name, model_name
         # otherwise, fall through — more complex allOf merges are not collapsed here
 
@@ -211,7 +213,7 @@ def get_python_type_and_string(
                          isinstance(o, dict) and (o.get("enum") == [None] or o.get("nullable") is True)), None)
         if ref_opt and null_opt:
             name = pascal_case(ref_opt["$ref"].split("/")[-1])
-            imports.add(f"from models.{snake_case(name)} import {name}")
+            imports.add(f"from near_jsonrpc_models.{snake_case(name)} import {name}")
             union = f"{name} | None"
             return union, union
 
@@ -242,7 +244,7 @@ def get_python_type_and_string(
     # direct $ref
     if "$ref" in field_data:
         name = pascal_case(field_data["$ref"].split("/")[-1])
-        imports.add(f"from models.{snake_case(name)} import {name}")
+        imports.add(f"from near_jsonrpc_models.{snake_case(name)} import {name}")
         return name, name
 
     # integer
@@ -369,7 +371,7 @@ def get_python_type_and_string(
             return f"List[{item_class}]", container_ann
         if "$ref" in items:
             ref_model = pascal_case(items["$ref"].split("/")[-1])
-            imports.add(f"from models.{snake_case(ref_model)} import {ref_model}")
+            imports.add(f"from near_jsonrpc_models.{snake_case(ref_model)} import {ref_model}")
             item_ann = ref_model
             container_ann = build_container_annotation(item_ann)
             imports.add("from typing import List")
@@ -443,7 +445,7 @@ def _build_class_from_properties(class_name: str, props: Dict[str, Any], require
         extra_defs = []
     base = "StrictBaseModel" if strict else "BaseModel"
     if strict:
-        imports.add("from models.strict_model import StrictBaseModel")
+        imports.add("from near_jsonrpc_models.strict_model import StrictBaseModel")
     else:
         imports.add("from pydantic import BaseModel")
     body = f"class {class_name}({base}):\n"
@@ -529,7 +531,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
         # direct $ref alias
         if "$ref" in schema_data and set(schema_data.keys()).issubset({"$ref", "description"}):
             ref = pascal_case(schema_data["$ref"].split("/")[-1])
-            import_stmt = f"from models.{snake_case(ref)} import {ref}"
+            import_stmt = f"from near_jsonrpc_models.{snake_case(ref)} import {ref}"
             desc_block = f'"""{description}"""\n\n' if description else ""
             return f"{desc_block}{import_stmt}\n\n\n{pascal_case(schema_name)} = {ref}\n"
         # allOf single-$ref alias
@@ -537,7 +539,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 schema_data["allOf"]) == 1 and isinstance(schema_data["allOf"][0], dict) and "$ref" in \
                 schema_data["allOf"][0] and set(schema_data.keys()).issubset({"allOf", "description"}):
             ref = pascal_case(schema_data["allOf"][0]["$ref"].split("/")[-1])
-            import_stmt = f"from models.{snake_case(ref)} import {ref}"
+            import_stmt = f"from near_jsonrpc_models.{snake_case(ref)} import {ref}"
             desc_block = f'"""{description}"""\n\n' if description else ""
             return f"{desc_block}{import_stmt}\n\n\n{pascal_case(schema_name)} = {ref}\n"
 
@@ -546,7 +548,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
     if isinstance(schema_data, dict) and "$ref" in schema_data and set(schema_data.keys()).issubset(
             {"$ref", "description"}):
         ref = pascal_case(schema_data["$ref"].split("/")[-1])
-        import_stmt = f"from models.{snake_case(ref)} import {ref}"
+        import_stmt = f"from near_jsonrpc_models.{snake_case(ref)} import {ref}"
         desc_block = f'"""{description}"""\n\n' if description else ""
         return f"{desc_block}{import_stmt}\n\n\n{pascal_case(schema_name)} = {ref}\n"
 
@@ -628,7 +630,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                         continue
                     if "$ref" in entry:
                         ref_name = pascal_case(entry["$ref"].split("/")[-1])
-                        imports.add(f"from models.{snake_case(ref_name)} import {ref_name}")
+                        imports.add(f"from near_jsonrpc_models.{snake_case(ref_name)} import {ref_name}")
                     if entry.get("type") == "object" and "properties" in entry:
                         for k, v in entry.get("properties", {}).items():
                             merged_props[k] = v
@@ -725,7 +727,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     suffix = ref
                 combined = to_class_name(pascal_case(schema_name), suffix)
                 combined = _ensure_unique_name(combined, used_class_names)
-                imports.add(f"from models.{snake_case(ref)} import {ref}")
+                imports.add(f"from near_jsonrpc_models.{snake_case(ref)} import {ref}")
                 local_nested: List[str] = []
                 # try to detect strictness of the option wrapper (if explicitly set)
                 strict_opt = opt.get("additionalProperties") is False
@@ -972,7 +974,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     alias_candidate = _ensure_unique_name(alias_candidate, used_class_names)
                 used_aliases.add(alias_candidate)
 
-                imports.add(f"from models.{snake_case(ref)} import {ref}")
+                imports.add(f"from near_jsonrpc_models.{snake_case(ref)} import {ref}")
                 # Build merged properties class and then change its parent to inherit from the referenced model
                 merged_props = dict(properties or {})
                 if isinstance(opt.get("properties"), dict):
@@ -1158,7 +1160,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
     imports.add("from pydantic import BaseModel")
     top_strict = isinstance(schema_data, dict) and schema_data.get("additionalProperties") is False
     if top_strict:
-        imports.add("from models.strict_model import StrictBaseModel")
+        imports.add("from near_jsonrpc_models.strict_model import StrictBaseModel")
 
     base = "StrictBaseModel" if top_strict else "BaseModel"
     class_body = f"class {pascal_case(schema_name)}({base}):\n"
@@ -1209,7 +1211,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                             ref_model = pascal_case(e["$ref"].split("/")[-1])
                             break
                     ref_model = ref_model or ann
-                imports.add(f"from models.{snake_case(ref_model)} import {ref_model}")
+                imports.add(f"from near_jsonrpc_models.{snake_case(ref_model)} import {ref_model}")
                 factory = f"lambda: [{ref_model}(**item) for item in {repr(default)}]"
                 if is_req:
                     class_body += f"    {field}: {ann} = Field(default_factory={factory})\n"
@@ -1310,36 +1312,77 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
 # -------------------------
 # IO helpers
 # -------------------------
-def save_model_to_file(model_code: str, schema_name: str, out_dir: str = "models") -> None:
+def save_model_to_file(model_code: str, schema_name: str, out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"{snake_case(schema_name)}.py")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(model_code)
 
+def find_classes_and_aliases(path: str) -> List[str]:
+    """
+    Returns all class names and simple aliases (Name = Name) in a Python file.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read())
 
-def generate_models_init_py(ctx: GeneratorContext, models_dir: str = "models") -> None:
-    schema_names = sorted(ctx.schemas.keys())
-    lines: List[str] = []
-    lines.append("# GENERATED FILE — DO NOT EDIT MANUALLY")
-    lines.append("# This file is re-generated by the model generator.")
-    lines.append("")
-    lines.append("from typing import TYPE_CHECKING")
-    lines.append("")
+    names: List[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            names.append(node.name)
+        elif isinstance(node, ast.Assign):
+            if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                target = node.targets[0].id
+                if isinstance(node.value, ast.Name):
+                    names.append(target)
+
+    return names
+
+
+def generate_models_init_py(models_dir: str) -> None:
+    """
+    Generate __init__.py including all classes and simple aliases.
+    """
+    lines: List[str] = [
+        "# GENERATED FILE — DO NOT EDIT MANUALLY",
+        "# This file is re-generated by the model generator.",
+        "from typing import TYPE_CHECKING",
+        "",
+    ]
+
+    py_files = [f for f in os.listdir(models_dir)
+                if f.endswith(".py") and f != "__init__.py"]
+
+    all_classes: List[str] = []
+
+    # TYPE_CHECKING imports
     lines.append("if TYPE_CHECKING:")
-    for s in schema_names:
-        cls = pascal_case(s)
-        mod = snake_case(s)
-        lines.append(f"    from .{mod} import {cls}  # pragma: no cover")
+    for py_file in py_files:
+        mod_name = py_file[:-3]
+        file_path = os.path.join(models_dir, py_file)
+        classes = find_classes_and_aliases(file_path)
+        all_classes.extend(classes)
+        for cls in classes:
+            lines.append(f"    from .{mod_name} import {cls}")
+
+    # __all__ list
     lines.append("")
     lines.append("__all__ = [")
-    for s in schema_names:
-        lines.append(f"    {pascal_case(s)!r},")
+    for cls in sorted(all_classes):
+        lines.append(f"    {cls!r},")
     lines.append("]")
+
+    # _CLASS_TO_MODULE mapping
     lines.append("")
     lines.append("_CLASS_TO_MODULE = {")
-    for s in schema_names:
-        lines.append(f"    {pascal_case(s)!r}: {snake_case(s)!r},")
+    for py_file in py_files:
+        mod_name = py_file[:-3]
+        classes = find_classes_and_aliases(os.path.join(models_dir, py_file))
+        for cls in classes:
+            lines.append(f"    {cls!r}: {mod_name!r},")
     lines.append("}")
+
+    # __getattr__ for lazy loading
     lines.append("")
     lines.append("def __getattr__(name: str):")
     lines.append("    if name in _CLASS_TO_MODULE:")
@@ -1350,17 +1393,24 @@ def generate_models_init_py(ctx: GeneratorContext, models_dir: str = "models") -
     lines.append("        globals()[name] = value")
     lines.append("        return value")
     lines.append("    raise AttributeError(name)")
+
+    # __dir__ for autocomplete
     lines.append("")
     lines.append("def __dir__():")
     lines.append("    return sorted(list(globals().keys()) + list(__all__))")
     lines.append("")
+
+    # write to __init__.py
     os.makedirs(models_dir, exist_ok=True)
     init_path = os.path.join(models_dir, "__init__.py")
     with open(init_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
 
+    print(f"Generated __init__.py with {len(all_classes)} classes/aliases.")
 
-def delete_types(models_dir: str = "models") -> None:
+
+
+def delete_types(models_dir: str = "near_jsonrpc_models") -> None:
     if os.path.exists(models_dir):
         for filename in os.listdir(models_dir):
 
@@ -1377,16 +1427,16 @@ def delete_types(models_dir: str = "models") -> None:
         print(f"Folder {models_dir} does not exist.")
 
 
-def generate_models(ctx, models_dir="models"):
+def generate_models(ctx, models_dir):
     models_path = Path(models_dir)
     models_path.mkdir(parents=True, exist_ok=True)
 
     # generate each model
     for schema_name, schema_data in ctx.schemas.items():
         model_code = generate_model(schema_name, schema_data, ctx)
-        save_model_to_file(model_code, schema_name)
+        save_model_to_file(model_code, schema_name, models_dir)
 
     # generate __init__.py
-    generate_models_init_py(ctx, models_dir=models_dir)
+    generate_models_init_py(models_dir=models_dir)
 
     print(f"✅ Models generated successfully")

@@ -1,8 +1,7 @@
 import asyncio
-from client import NearClientAsync, ClientError, RpcError, HttpError
-from client.errors import RequestTimeoutError
-from models import RpcQueryRequest, AccountId, FunctionArgs
-from models.rpc_query_request import RpcQueryRequestCallFunctionByFinality
+from near_jsonrpc_client import NearClientAsync, ClientError, RpcError, HttpError, RequestTimeoutError
+from near_jsonrpc_models import RpcQueryRequest, AccountId, FunctionArgs, RpcQueryRequestCallFunctionByFinality
+
 
 async def main():
     client = NearClientAsync(base_url="https://rpc.mainnet.near.org")
@@ -31,5 +30,6 @@ async def main():
         print("Invalid response:", e)
 
     await client.close()
+
 
 asyncio.run(main())

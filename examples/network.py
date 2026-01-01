@@ -1,6 +1,5 @@
 import asyncio
-from client import NearClientAsync, ClientError, RpcError, HttpError
-from client.errors import RequestTimeoutError
+from near_jsonrpc_client import NearClientAsync, ClientError, RpcError, HttpError, RequestTimeoutError
 
 
 async def main():

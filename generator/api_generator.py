@@ -19,7 +19,7 @@ class ApiGenerator:
         ctx: GeneratorContext,
         *,
         output_dir: Path = Path("client"),
-        models_module: str = "models",
+        models_module: str = "near_jsonrpc_models",
         base_client_module: str = "base_client",
     ) -> None:
         output_dir = Path(output_dir)
