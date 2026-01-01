@@ -21,6 +21,16 @@ async def main():
         tx = await client.query(params=params)
         print("call ft balance:", tx)
 
+    except RpcError as e:
+        print(f"{e}: {e.error}")
+    except RequestTimeoutError as e:
+        print(f"{e}")
+    except HttpError as e:
+        print(f"{e}: status: {e.status_code}, body: {e.body}")
+    except ClientError as e:
+        print("Invalid response:", e)
+
+    try:
         params = RpcQueryRequest(
             RpcQueryRequestViewAccountByFinality(
                 finality=Finality('final').root,
