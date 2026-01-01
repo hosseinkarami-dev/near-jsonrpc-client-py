@@ -1,18 +1,21 @@
-from setuptools import setup
-
+from setuptools import setup, find_packages
 import os
 
-PACKAGE_VERSION = os.getenv("PACKAGE_VERSION", "0.0.1")
+PACKAGE_VERSION = os.getenv("PACKAGE_VERSION", "0.1.0")
 
 setup(
-    name="near_jsonrpc_client",
+    name="near-jsonrpc-client",
     version=PACKAGE_VERSION,
-    description="A Python client for interacting with NEAR Protocol's JSON-RPC API, supporting both sync and async "
-                "requests with Pydantic models",
-    packages=["near_jsonrpc_client", "near_jsonrpc_models"],
+    description="A Python client for interacting with NEAR JSON-RPC API",
+    packages=find_packages(include=["near_jsonrpc_client*", "near_jsonrpc_models*"]),
     install_requires=[
-        "pydantic>=2.0",
         "httpx>=0.24",
+        "pydantic>=2.0",
     ],
-    python_requires=">=3.11",
+    python_requires=">=3.9",
+    entry_points={
+        "console_scripts": [
+            "near-jsonrpc-client=cli:main",
+        ],
+    },
 )
