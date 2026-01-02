@@ -1,5 +1,7 @@
+# model_generator.py
 import ast
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
@@ -58,7 +60,6 @@ def _is_nullable(field_data: Dict[str, Any]) -> bool:
                 return True
             if o.get("enum") == [None]:
                 return True
-            # sometimes null is represented as {"type": "null"} or enum contains null
             if o.get("type") == "null":
                 return True
             if o.get("enum") and None in o.get("enum"):
@@ -73,20 +74,15 @@ def _is_nullable(field_data: Dict[str, Any]) -> bool:
     return False
 
 
-# helper to inject a class-level docstring into a generated class definition
 def _inject_class_docstring(class_def: str, class_name: str, description: Optional[str]) -> str:
     if not description:
         return class_def
-
-    # sanitize triple quotes in description
     desc_sanitized = description.replace('"""', '\\"\\"\\"')
-
     headers = [
         f"class {class_name}(BaseModel):\n",
         f"class {class_name}(StrictBaseModel):\n",
         f"class {class_name}(RootModel",
     ]
-
     for header in headers:
         idx = class_def.find(header)
         if idx != -1:
@@ -94,14 +90,13 @@ def _inject_class_docstring(class_def: str, class_name: str, description: Option
             for i, line in enumerate(lines):
                 if line.startswith(f"class {class_name}"):
                     return (
-                            "".join(lines[: i + 1])
-                            + f'    """{desc_sanitized}"""\n'
-                            + "".join(lines[i + 1:])
+                        "".join(lines[: i + 1])
+                        + f'    """{desc_sanitized}"""\n'
+                        + "".join(lines[i + 1:])
                     )
     lines = class_def.splitlines(True)
     if lines:
         return lines[0] + f'    """{desc_sanitized}"""\n' + "".join(lines[1:])
-
     return class_def
 
 
@@ -148,30 +143,67 @@ def generate_datetime_string_parser_validator(field_name: str) -> str:
 
 # -------------------------
 # helper: ensure unique class/alias names within generation context
+# deterministic, avoids double-Option/Option11 and produces minimal numeric suffix when needed
 # -------------------------
 def _ensure_unique_name(candidate: str, used: Set[str]) -> str:
+    """
+    Ensure unique candidate. If taken, append the smallest positive integer to the 'base' (base = candidate without trailing digits).
+    Deterministic and produces minimal numeric suffix.
+    """
     if candidate not in used:
         used.add(candidate)
         return candidate
-    base = candidate
+
+    # strip trailing digits
+    m = re.match(r"^(.*?)(\d+)$", candidate)
+    base = m.group(1) if m else candidate
+    if not base:
+        base = candidate
+
     i = 1
-    # try readable suffix first
-    if not base.endswith("Option") and not base.endswith("Variant"):
-        candidate = f"{base}Option"
-        if candidate not in used:
-            used.add(candidate)
-            return candidate
-    # then numeric suffixes
     while True:
-        candidate = f"{base}{i}"
-        if candidate not in used:
-            used.add(candidate)
-            return candidate
+        cand = f"{base}{i}"
+        if cand not in used:
+            used.add(cand)
+            return cand
         i += 1
 
 
 # -------------------------
-# type resolution
+# helper: descriptive suffix generator
+# prefer discriminant enum value, then title, then distinctive prop names, else OptionN
+# -------------------------
+def _make_descriptive_suffix(schema_name: str, props: Dict[str, Any], prop_freq: Dict[str, int], fallback_idx: int) -> str:
+    # 1) look for 'type' property that is a single-member enum
+    type_prop = props.get("type")
+    if isinstance(type_prop, dict) and isinstance(type_prop.get("enum"), list) and type_prop.get("enum"):
+        return pascal_case(type_prop["enum"][0])
+
+    # 2) prefer explicit title in props? (handled by callers usually)
+    # 3) if there's a 'name' property with enum -> use it
+    name_prop = props.get("name")
+    if isinstance(name_prop, dict) and isinstance(name_prop.get("enum"), list) and name_prop.get("enum"):
+        return pascal_case(name_prop["enum"][0])
+
+    # 4) look for a distinctive single property
+    if len(props) == 1:
+        only = next(iter(props.keys()))
+        return pascal_case(only)
+
+    # 5) otherwise pick the most distinctive properties (lowest frequency), take up to two and combine
+    if props:
+        candidates = sorted(props.keys(), key=lambda n: (prop_freq.get(n, 0), n))
+        chosen = candidates[:2]  # up to two props
+        joined = "".join(pascal_case(p) for p in chosen)
+        if joined:
+            return joined
+
+    # 6) fallback: Option{fallback_idx}
+    return f"Option{fallback_idx}"
+
+
+# -------------------------
+# type resolution (unchanged)
 # returns (placeholder/python-object, annotation-string)
 # -------------------------
 def get_python_type_and_string(
@@ -188,20 +220,16 @@ def get_python_type_and_string(
 
     # --- special: allOf single-$ref -> return referenced model type ---
     if "allOf" in field_data and isinstance(field_data["allOf"], list):
-        # if there's exactly one entry and it's a $ref, treat it as that ref
-        if len(field_data["allOf"]) == 1 and isinstance(field_data["allOf"][0], dict) and "$ref" in field_data["allOf"][
-            0]:
+        if len(field_data["allOf"]) == 1 and isinstance(field_data["allOf"][0], dict) and "$ref" in field_data["allOf"][0]:
             ref = field_data["allOf"][0]["$ref"]
             model_name = pascal_case(ref.split("/")[-1])
             imports.add(f"from near_jsonrpc_models.{snake_case(model_name)} import {model_name}")
             return model_name, model_name
-        # otherwise, fall through — more complex allOf merges are not collapsed here
 
     # Inline enum -> Literal (string enums)
     if "enum" in field_data and field_data.get("type") == "string" and "$ref" not in field_data:
         imports.add("from typing import Literal")
         vals = field_data["enum"]
-        # if single-member enum, return a Literal annotation
         if len(vals) == 1:
             return str, f"Literal[{repr(vals[0])}]"
         return str, "Literal[" + ", ".join(repr(v) for v in vals) + "]"
@@ -209,8 +237,7 @@ def get_python_type_and_string(
     # anyOf pattern nullable + $ref -> Model | None
     if "anyOf" in field_data:
         ref_opt = next((o for o in field_data["anyOf"] if isinstance(o, dict) and "$ref" in o), None)
-        null_opt = next((o for o in field_data["anyOf"] if
-                         isinstance(o, dict) and (o.get("enum") == [None] or o.get("nullable") is True)), None)
+        null_opt = next((o for o in field_data["anyOf"] if isinstance(o, dict) and (o.get("enum") == [None] or o.get("nullable") is True)), None)
         if ref_opt and null_opt:
             name = pascal_case(ref_opt["$ref"].split("/")[-1])
             imports.add(f"from near_jsonrpc_models.{snake_case(name)} import {name}")
@@ -222,14 +249,12 @@ def get_python_type_and_string(
         flattenable = True
         vals = []
         for opt in field_data["oneOf"]:
-            if isinstance(opt, dict) and opt.get("type") == "string" and "enum" in opt and isinstance(opt["enum"],
-                                                                                                      list):
+            if isinstance(opt, dict) and opt.get("type") == "string" and "enum" in opt and isinstance(opt["enum"], list):
                 vals.extend(opt["enum"])
             else:
                 flattenable = False
                 break
         if flattenable and vals:
-            # dedupe preserving order
             seen = set()
             dedup_vals = []
             for v in vals:
@@ -307,10 +332,8 @@ def get_python_type_and_string(
     # string
     if json_type == "string":
         fmt = field_data.get("format")
-
         if fmt == "bytes" or fmt == "byte":
             return str, "str"
-
         if fmt == "date-time":
             imports.add("from datetime import datetime")
             return datetime, "datetime"
@@ -339,19 +362,15 @@ def get_python_type_and_string(
         min_items = field_data.get("minItems")
         max_items = field_data.get("maxItems")
 
-        # helper to build conlist annotation when needed
         def build_container_annotation(item_annotation: str) -> str:
-            # item_annotation expected like "Type" or "List[Type]" etc — use as-is inside conlist
             if min_items is None and max_items is None:
                 return f"List[{item_annotation}]"
-            # use conlist when there are bounds
             imports.add("from pydantic import conlist")
             args = []
             if min_items is not None:
                 args.append(f"min_length={min_items}")
             if max_items is not None:
                 args.append(f"max_length={max_items}")
-            # join args with comma if both present
             args_str = ", ".join(args)
             return f"conlist({item_annotation}, {args_str})" if args_str else f"conlist({item_annotation})"
 
@@ -362,7 +381,6 @@ def get_python_type_and_string(
             class_def = _build_class_from_properties(item_class, items.get("properties", {}), items.get("required", []),
                                                      ctx, imports, extra_defs=nested_defs,
                                                      strict=items.get("additionalProperties") is False)
-            # place nested defs into extra_defs so caller will emit them
             extra_defs.extend(nested_defs)
             extra_defs.append(class_def)
             item_ann = item_class
@@ -387,15 +405,12 @@ def get_python_type_and_string(
     if json_type == "object":
         if "properties" in field_data:
             root = parent_name if parent_name else pascal_case(field or "Anon")
-
             field_pc = pascal_case(field)
             if root.endswith(field_pc):
                 cls_name = f"{root}Payload"
             else:
                 cls_name = to_class_name(root, field)
-
             nested_defs: List[str] = []
-            # determine strictness for this object
             strict_obj = field_data.get("additionalProperties") is False
             class_def = _build_class_from_properties(
                 cls_name,
@@ -453,51 +468,37 @@ def _build_class_from_properties(class_name: str, props: Dict[str, Any], require
         body += "    pass\n\n"
         return body
     for field, fd in props.items():
-        # pass the same extra_defs so nested classes are accumulated in caller's list
         _, ann = get_python_type_and_string(field, fd.get("type"), fd, ctx, imports, parent_name=class_name,
                                             extra_defs=extra_defs)
         is_req = field in required_fields
         if fd.get("type") == "array":
             imports.add("from typing import List")
 
-        # Determine if schema provides an explicit default (even if it is None)
         has_default = "default" in fd
         default = fd.get("default", None)
-
-        # include field description as a comment if present
         desc_field = fd.get("description")
         if desc_field:
             body += f"    # {desc_field.replace(chr(10), chr(10) + '    # ')}\n"
 
-        # determine explicit nullability according to schema
         nullable = _is_nullable(fd)
 
         if is_req:
-            # required fields: keep exact annotation; include default if specified
             if has_default:
                 body += f"    {field}: {ann} = {repr(default)}\n"
             else:
                 body += f"    {field}: {ann}\n"
         else:
-            # not required (field may be omitted) — produce sensible mapping:
-            # - if schema is nullable -> Optional[...] with default (if provided) or = None
-            # - elif has_default -> use concrete type (no Optional) and assign default
-            # - else -> make it Optional[...] = None so omission is allowed
             if has_default:
                 if default is None:
-                    # default explicitly None -> we must allow None
                     annotate = ensure_optional_annotation(ann)
                     body += f"    {field}: {annotate} = {repr(default)}\n"
                 else:
-                    # explicit default and not None -> prefer concrete type (no Optional) unless schema is nullable
                     if nullable:
                         annotate = ensure_optional_annotation(ann)
                     else:
                         annotate = ann
                     body += f"    {field}: {annotate} = {repr(default)}\n"
             else:
-                # no default provided: make field optional (omittable).
-                # Use Optional[...] = None. This allows omission at runtime.
                 if nullable:
                     annotate = ensure_optional_annotation(ann)
                 else:
@@ -516,43 +517,27 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
     required_fields = schema_data.get("required", [])
     description = schema_data.get("description", "")
 
-    # always include BaseModel import so generated files are consistent
     imports: Set[str] = {"from pydantic import BaseModel"}
-    extra_class_defs: List[str] = []  # top-level extra defs (will be emitted after imports)
+    extra_class_defs: List[str] = []
 
-    # prepare a set of used class names (avoid collisions with other schemas)
+    # global set of used names (avoid collisions across all generated schemas)
     used_class_names: Set[str] = set(pascal_case(s) for s in ctx.schemas.keys())
-    # ensure the current schema name is considered used
     used_class_names.add(pascal_case(schema_name))
 
-    # ---- handle simple $ref or single-$ref allOf alias at top-level (e.g. "ChunkHash": {"$ref": "#/components/schemas/CryptoHash"}) ----
-    # treat as an alias to the referenced model (preserve optional description)
+    # ---- handle simple aliases ----
     if isinstance(schema_data, dict):
-        # direct $ref alias
         if "$ref" in schema_data and set(schema_data.keys()).issubset({"$ref", "description"}):
             ref = pascal_case(schema_data["$ref"].split("/")[-1])
             import_stmt = f"from near_jsonrpc_models.{snake_case(ref)} import {ref}"
             desc_block = f'"""{description}"""\n\n' if description else ""
             return f"{desc_block}{import_stmt}\n\n\n{pascal_case(schema_name)} = {ref}\n"
-        # allOf single-$ref alias
-        if "allOf" in schema_data and isinstance(schema_data["allOf"], list) and len(
-                schema_data["allOf"]) == 1 and isinstance(schema_data["allOf"][0], dict) and "$ref" in \
-                schema_data["allOf"][0] and set(schema_data.keys()).issubset({"allOf", "description"}):
+        if "allOf" in schema_data and isinstance(schema_data["allOf"], list) and len(schema_data["allOf"]) == 1 and isinstance(schema_data["allOf"][0], dict) and "$ref" in schema_data["allOf"][0] and set(schema_data.keys()).issubset({"allOf", "description"}):
             ref = pascal_case(schema_data["allOf"][0]["$ref"].split("/")[-1])
             import_stmt = f"from near_jsonrpc_models.{snake_case(ref)} import {ref}"
             desc_block = f'"""{description}"""\n\n' if description else ""
             return f"{desc_block}{import_stmt}\n\n\n{pascal_case(schema_name)} = {ref}\n"
 
-    # ---- handle simple $ref alias at top-level (e.g. "ChunkHash": {"$ref": "#/components/schemas/CryptoHash"}) ----
-    # treat as an alias to the referenced model (preserve optional description)
-    if isinstance(schema_data, dict) and "$ref" in schema_data and set(schema_data.keys()).issubset(
-            {"$ref", "description"}):
-        ref = pascal_case(schema_data["$ref"].split("/")[-1])
-        import_stmt = f"from near_jsonrpc_models.{snake_case(ref)} import {ref}"
-        desc_block = f'"""{description}"""\n\n' if description else ""
-        return f"{desc_block}{import_stmt}\n\n\n{pascal_case(schema_name)} = {ref}\n"
-
-    # top-level enum None -> generate RootModel wrapper over NoneType
+    # top-level enums/primitives handled earlier (kept as before)
     if schema_data.get("enum") == [None]:
         desc = f'"""{description}"""\n\n' if description else ""
         imports_local = {"from pydantic import RootModel", "from types import NoneType"}
@@ -560,7 +545,6 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
         class_def = f"class {pascal_case(schema_name)}(RootModel[NoneType]):\n    pass\n\n"
         return f"{desc}{import_block}\n\n\n{class_def}"
 
-    # top-level string enum -> produce a pydantic RootModel wrapper over Literal[...] (not Python Enum)
     if "enum" in schema_data and schema_data.get("type") == "string":
         imports_needed = {"from pydantic import RootModel", "from typing import Literal"}
         enum_name = pascal_case(schema_name)
@@ -571,14 +555,12 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
         class_def = f"class {enum_name}(RootModel[Literal[{lit}]]):\n    pass\n\n"
         return f"{desc_block}{import_block}\n\n\n{class_def}"
 
-    # oneOf handling (string enums or complex)
+    # oneOf handling
     if "oneOf" in schema_data:
-        # detect if all options are string enums (single- or multi-member)
         all_string_enums = True
         val_to_desc: Dict[str, Optional[str]] = {}
         for opt in schema_data["oneOf"]:
-            if isinstance(opt, dict) and opt.get("type") == "string" and isinstance(opt.get("enum"), list) and opt.get(
-                    "enum"):
+            if isinstance(opt, dict) and opt.get("type") == "string" and isinstance(opt.get("enum"), list) and opt.get("enum"):
                 for v in opt["enum"]:
                     if v not in val_to_desc:
                         val_to_desc[v] = opt.get("description")
@@ -599,14 +581,12 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
             class_def = f"class {pascal_case(schema_name)}(RootModel[Literal[{lit_vals}]]):\n    pass\n\n"
             return f"{desc_block}{import_block}\n\n\n{class_def}"
 
-        # complex oneOf -> create option classes (incl. nested defs) and a Union
+        # complex oneOf -> produce option classes
         option_names: List[str] = []
         option_defs: List[str] = []
         imports.add("from pydantic import BaseModel")
 
-        # Precompute property frequencies across object-style options to pick distinctive suffixes
-        obj_options = [opt for opt in schema_data["oneOf"] if
-                       isinstance(opt, dict) and opt.get("type") == "object" and "properties" in opt]
+        obj_options = [opt for opt in schema_data["oneOf"] if isinstance(opt, dict) and opt.get("type") == "object" and "properties" in opt]
         prop_freq: Dict[str, int] = {}
         for o in obj_options:
             for pn in o.get("properties", {}).keys():
@@ -616,15 +596,13 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
         for opt in schema_data["oneOf"]:
             idx += 1
 
-            # Handle options that are expressed as allOf (merge their parts)
+            # merged allOf option
             if isinstance(opt, dict) and "allOf" in opt and isinstance(opt["allOf"], list):
-                # Merge entries in allOf into a single inline-like option
                 merged_props = dict(properties or {})
                 merged_required = set(required_fields or [])
                 strict_opt = False
                 title = opt.get("title")
                 ref_name = None
-                # track any $ref imports we encounter (we'll import them but still emit a wrapper class)
                 for entry in opt["allOf"]:
                     if not isinstance(entry, dict):
                         continue
@@ -637,42 +615,25 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                         merged_required.update(entry.get("required", []))
                     if entry.get("additionalProperties") is False:
                         strict_opt = True
-
-                # Merge option's own properties and required (fix for wrapper cases where opt has properties)
                 if isinstance(opt.get("properties"), dict):
                     for k, v in opt.get("properties", {}).items():
                         merged_props[k] = v
                 merged_required.update(opt.get("required", []))
 
-                # Determine suffix/name for this merged option similar to inline object handling
+                # choose suffix: title > type enum > name enum > distinctive props > OptionN
                 suffix = None
                 if isinstance(title, str) and title.strip():
                     suffix = pascal_case(title)
                 if suffix is None:
-                    # try to use an enum value from a "name" prop if present
-                    name_prop = None
-                    for entry in opt["allOf"]:
-                        if isinstance(entry, dict) and "properties" in entry:
-                            name_prop = entry["properties"].get("name")
-                            if isinstance(name_prop, dict) and name_prop.get("enum") and isinstance(name_prop["enum"],
-                                                                                                    list):
-                                suffix = pascal_case(name_prop["enum"][0])
-                                break
-                    # fallback: use most distinctive property
-                if suffix is None and merged_props:
-                    candidates = sorted(merged_props.keys(), key=lambda n: (prop_freq.get(n, 0), n))
-                    if candidates:
-                        suffix = pascal_case(candidates[0])
-                suffix = suffix or f"Option{idx}"
+                    suffix = _make_descriptive_suffix(pascal_case(schema_name), merged_props, prop_freq, idx)
+
                 combined = to_class_name(pascal_case(schema_name), suffix)
                 combined = _ensure_unique_name(combined, used_class_names)
                 local_nested: List[str] = []
                 merged_required_list = list(merged_required)
                 class_def = _build_class_from_properties(combined, merged_props, merged_required_list,
                                                          ctx, imports, extra_defs=local_nested, strict=strict_opt)
-                # If a $ref was present in the allOf, make the wrapper inherit from that ref
                 if ref_name:
-                    # replace header to inherit from the referenced model instead of BaseModel/StrictBaseModel
                     if f"class {combined}(" in class_def:
                         lines = class_def.splitlines(True)
                         if lines:
@@ -682,7 +643,6 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                             elif "(StrictBaseModel):" in first_line:
                                 lines[0] = first_line.replace("(StrictBaseModel):", f"({ref_name}):")
                             else:
-                                import re
                                 lines[0] = re.sub(r"\(.*\):", f"({ref_name}):", lines[0])
                             class_def = "".join(lines)
                 class_def = _inject_class_docstring(class_def, combined, opt.get("description"))
@@ -691,10 +651,8 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 option_names.append(combined)
                 continue
 
-            # string enum -> create RootModel(Literal[...]) alias class with descriptive name
-            if isinstance(opt, dict) and opt.get("type") == "string" and isinstance(opt.get("enum"), list) and opt.get(
-                    "enum"):
-                # derive a readable alias from the enum values (prefer first)
+            # string enum option -> alias RootModel[Literal[...]]
+            if isinstance(opt, dict) and opt.get("type") == "string" and isinstance(opt.get("enum"), list) and opt.get("enum"):
                 vals = opt["enum"]
                 raw = vals[0] if vals else f"Option{idx}"
                 suffix = pascal_case(str(raw))
@@ -702,7 +660,6 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 alias_name = _ensure_unique_name(alias_name, used_class_names)
                 imports.add("from pydantic import RootModel")
                 imports.add("from typing import Literal")
-                # deduplicate preserving order
                 seen = set()
                 dedup_vals = []
                 for v in vals:
@@ -710,16 +667,14 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                         dedup_vals.append(v)
                         seen.add(v)
                 lit_vals = ", ".join(repr(v) for v in dedup_vals)
-                alias_def = (f'"""{opt.get("description")}"""\n' if opt.get(
-                    "description") else "") + f"class {alias_name}(RootModel[Literal[{lit_vals}]]):\n    pass\n\n"
+                alias_def = (f'"""{opt.get("description")}"""\n' if opt.get("description") else "") + f"class {alias_name}(RootModel[Literal[{lit_vals}]]):\n    pass\n\n"
                 option_defs.append((alias_name, alias_def))
                 option_names.append(alias_name)
                 continue
 
-            # $ref -> wrapper subclass of referenced model (and inject parent's props)
+            # $ref option -> wrapper
             if isinstance(opt, dict) and "$ref" in opt:
                 ref = pascal_case(opt["$ref"].split("/")[-1])
-                # prefer a descriptive wrapper name combining parent schema and referenced model (e.g. RpcQueryResponseAccountView)
                 title = opt.get("title")
                 if isinstance(title, str) and title.strip():
                     suffix = pascal_case(title)
@@ -729,18 +684,13 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 combined = _ensure_unique_name(combined, used_class_names)
                 imports.add(f"from near_jsonrpc_models.{snake_case(ref)} import {ref}")
                 local_nested: List[str] = []
-                # try to detect strictness of the option wrapper (if explicitly set)
                 strict_opt = opt.get("additionalProperties") is False
-                # Merge top-level properties into wrapper so shared properties are present
                 merged_props = dict(properties or {})
                 merged_required = list(set(required_fields or []) | set(opt.get("required", [])))
-                # If the option itself provides properties, merge them too (opt could contain both $ref and properties)
                 if isinstance(opt.get("properties"), dict):
                     for k, v in opt.get("properties", {}).items():
                         merged_props[k] = v
-                class_def = _build_class_from_properties(combined, merged_props, merged_required, ctx, imports,
-                                                         extra_defs=local_nested, strict=strict_opt)
-                # replace header to inherit from the referenced model instead of BaseModel/StrictBaseModel
+                class_def = _build_class_from_properties(combined, merged_props, merged_required, ctx, imports, extra_defs=local_nested, strict=strict_opt)
                 header_base = f"class {combined}("
                 if header_base in class_def:
                     lines = class_def.splitlines(True)
@@ -751,7 +701,6 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                         elif "(StrictBaseModel):" in first_line:
                             lines[0] = first_line.replace("(StrictBaseModel):", f"({ref}):")
                         else:
-                            import re
                             lines[0] = re.sub(r"\(.*\):", f"({ref}):", lines[0])
                         class_def = "".join(lines)
                 class_def = _inject_class_docstring(class_def, combined, opt.get("description"))
@@ -760,69 +709,40 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 option_names.append(combined)
                 continue
 
-            # inline object option -> choose a descriptive suffix derived from the option's properties (no hardcoded field list)
+            # inline object option -> use descriptive suffix (type enum / prop names / OptionN fallback)
             if isinstance(opt, dict) and opt.get("type") == "object" and "properties" in opt:
                 props = opt.get("properties", {})
-                # prefer explicit title for naming; fallback to heuristics then OptionN
                 title = opt.get("title")
+                suffix = None
                 if isinstance(title, str) and title.strip():
                     suffix = pascal_case(title)
-                else:
-                    suffix = None
-
                 if suffix is None:
-                    # If name property has enum -> use its enum value (keeps descriptive value)
-                    name_prop = props.get("name")
-                    if isinstance(name_prop, dict) and name_prop.get("enum") and isinstance(name_prop["enum"], list):
-                        suffix = pascal_case(name_prop["enum"][0])
-
-                # If only one property present, use its property name
-                if suffix is None and len(props) == 1:
-                    prop_name = next(iter(props.keys()))
-                    suffix = pascal_case(prop_name)
-
-                # Otherwise pick the most distinctive property name (lowest frequency across object options)
-                if suffix is None and props:
-                    # compute candidates sorted by (freq, name) to be deterministic: prefer lower freq, then lexicographic
-                    candidates = sorted(props.keys(), key=lambda n: (prop_freq.get(n, 0), n))
-                    if candidates:
-                        suffix = pascal_case(candidates[0])
-
-                suffix = suffix or f"Option{idx}"
+                    suffix = _make_descriptive_suffix(pascal_case(schema_name), props, prop_freq, idx)
                 combined = to_class_name(pascal_case(schema_name), suffix)
                 combined = _ensure_unique_name(combined, used_class_names)
                 local_nested: List[str] = []
                 strict_opt = opt.get("additionalProperties") is False
-
-                # Merge top-level properties with option-specific properties so shared properties appear in each option class.
                 merged_props = dict(properties or {})
                 for k, v in (props or {}).items():
                     merged_props[k] = v
                 merged_required = list(set(required_fields or []) | set(opt.get("required", [])))
-
-                class_def = _build_class_from_properties(combined, merged_props, merged_required,
-                                                         ctx, imports, extra_defs=local_nested, strict=strict_opt)
-                # inject description for this inline option wrapper class
+                class_def = _build_class_from_properties(combined, merged_props, merged_required, ctx, imports, extra_defs=local_nested, strict=strict_opt)
                 class_def = _inject_class_docstring(class_def, combined, opt.get("description"))
                 option_defs.extend((None, d) for d in local_nested)
                 option_defs.append((combined, class_def))
                 option_names.append(combined)
                 continue
 
-            # fallback wrapper (use Variant suffix to avoid generic OptionN names)
+            # fallback variant
             combined = f"{pascal_case(schema_name)}Variant{idx}"
             combined = _ensure_unique_name(combined, used_class_names)
-            # fallback uses BaseModel — we don't know strictness here
             fallback_def = f"class {combined}(BaseModel):\n    value: Any\n\n"
-            # inject description if provided
-            fallback_def = _inject_class_docstring(fallback_def, combined,
-                                                   opt.get("description") if isinstance(opt, dict) else None)
+            fallback_def = _inject_class_docstring(fallback_def, combined, opt.get("description") if isinstance(opt, dict) else None)
             option_defs.append((combined, fallback_def))
             option_names.append(combined)
             imports.add("from typing import Any")
 
         imports.add("from typing import Union")
-        # add RootModel import so unions are wrapped as Pydantic RootModel classes
         imports.add("from pydantic import RootModel")
         import_block = "\n".join(sorted(imports))
         defs_code = ""
@@ -830,11 +750,10 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
             defs_code += d
         desc_block = f'"""{description}"""\n\n' if description else ""
         union_inner = ", ".join(option_names)
-        # emit a RootModel wrapper for the Union
         wrapper_def = f"class {pascal_case(schema_name)}(RootModel[Union[{union_inner}]]):\n    pass\n\n"
         return f"{desc_block}{import_block}\n\n\n{defs_code}{wrapper_def}"
 
-    # anyOf handling (merge top-level properties into each option and produce Union of merged variants)
+    # anyOf handling (prefer descriptive suffixes from props to avoid OptionN)
     if "anyOf" in schema_data:
         opts = schema_data["anyOf"]
         parts: List[str] = []
@@ -852,8 +771,6 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
             t = opt.get("type")
             title = opt.get("title")
             desc = opt.get("description") or ""
-
-            # alias name from schemaName + title (preferred) or Option{idx}
             if isinstance(title, str) and title.strip():
                 suffix = pascal_case(title)
             else:
@@ -903,13 +820,9 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                         args.append(f"ge={minimum}")
                     if maximum is not None:
                         args.append(f"le={maximum}")
-                    local_defs.append(
-                        (
-                            f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[conint({', '.join(args)})]):\n    pass\n\n"
-                    )
+                    local_defs.append((f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[conint({', '.join(args)})]):\n    pass\n\n")
                 else:
-                    local_defs.append(
-                        (f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[int]):\n    pass\n\n")
+                    local_defs.append((f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[int]):\n    pass\n\n")
                 return alias_candidate
 
             if t == "number":
@@ -922,16 +835,12 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     args.append(f"le={maximum}")
                 if args:
                     need_condecimal = True
-                    local_defs.append(
-                        (
-                            f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[condecimal({', '.join(args)})]):\n    pass\n\n")
+                    local_defs.append((f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[condecimal({', '.join(args)})]):\n    pass\n\n")
                 else:
-                    local_defs.append((
-                                          f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[float]):\n    pass\n\n")
+                    local_defs.append((f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[float]):\n    pass\n\n")
                 return alias_candidate
 
             if t == "string":
-                # if enum present -> produce RootModel(Literal[...]) alias (descriptive name)
                 if "enum" in opt and isinstance(opt["enum"], list) and opt["enum"]:
                     need_literal = True
                     vals = opt["enum"]
@@ -942,25 +851,19 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                             dedup_vals.append(v)
                             seen.add(v)
                     lit_vals = ", ".join(repr(v) for v in dedup_vals)
-                    local_defs.append(
-                        (
-                            f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[Literal[{lit_vals}]]):\n    pass\n\n"
-                    )
+                    local_defs.append((f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[Literal[{lit_vals}]]):\n    pass\n\n")
                     return alias_candidate
-                local_defs.append(
-                    (f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[str]):\n    pass\n\n")
+                local_defs.append((f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[str]):\n    pass\n\n")
                 return alias_candidate
 
             if t == "boolean":
-                local_defs.append(
-                    (f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[bool]):\n    pass\n\n")
+                local_defs.append((f'"""{desc}"""\n' if desc else "") + f"class {alias_candidate}(RootModel[bool]):\n    pass\n\n")
                 return alias_candidate
 
             return None
 
         for opt in opts:
             idx += 1
-            # $ref option -> create a merged wrapper class that inherits the referenced model (if possible)
             if isinstance(opt, dict) and "$ref" in opt:
                 ref = pascal_case(opt["$ref"].split("/")[-1])
                 title = opt.get("title")
@@ -973,19 +876,14 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 if alias_candidate in used_aliases:
                     alias_candidate = _ensure_unique_name(alias_candidate, used_class_names)
                 used_aliases.add(alias_candidate)
-
                 imports.add(f"from near_jsonrpc_models.{snake_case(ref)} import {ref}")
-                # Build merged properties class and then change its parent to inherit from the referenced model
                 merged_props = dict(properties or {})
                 if isinstance(opt.get("properties"), dict):
                     for k, v in opt.get("properties", {}).items():
                         merged_props[k] = v
                 merged_required = list(set(required_fields or []) | set(opt.get("required", [])))
                 local_nested: List[str] = []
-                class_def = _build_class_from_properties(alias_candidate, merged_props, merged_required, ctx, imports,
-                                                         extra_defs=local_nested,
-                                                         strict=opt.get("additionalProperties") is False)
-                # swap base to referenced model
+                class_def = _build_class_from_properties(alias_candidate, merged_props, merged_required, ctx, imports, extra_defs=local_nested, strict=opt.get("additionalProperties") is False)
                 if f"class {alias_candidate}(" in class_def:
                     lines = class_def.splitlines(True)
                     first = lines[0]
@@ -994,7 +892,6 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     elif "(StrictBaseModel):" in first:
                         lines[0] = first.replace("(StrictBaseModel):", f"({ref}):")
                     else:
-                        import re
                         lines[0] = re.sub(r"\(.*\):", f"({ref}):", lines[0])
                     class_def = "".join(lines)
                 class_def = _inject_class_docstring(class_def, alias_candidate, opt.get("description"))
@@ -1007,31 +904,30 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
             if alias:
                 parts.append(alias)
                 continue
+
             if isinstance(opt, dict) and opt.get("type") == "object" and "properties" in opt:
-                # Inline object option — merge top-level properties and option properties into a new class
                 title = opt.get("title")
+                suffix = None
                 if isinstance(title, str) and title.strip():
                     suffix = pascal_case(title)
-                else:
-                    suffix = f"Option{idx}"
+                if suffix is None:
+                    # prefer discriminant 'type' enum
+                    props = opt.get("properties", {})
+                    suffix = _make_descriptive_suffix(pascal_case(schema_name), props, {}, idx)
                 inline_name = to_class_name(pascal_case(schema_name), suffix)
                 inline_name = _ensure_unique_name(inline_name, used_class_names)
                 nested: List[str] = []
                 strict_opt = opt.get("additionalProperties") is False
-
                 merged_props = dict(properties or {})
                 for k, v in (opt.get("properties") or {}).items():
                     merged_props[k] = v
                 merged_required = list(set(required_fields or []) | set(opt.get("required", [])))
-
-                class_def = _build_class_from_properties(inline_name, merged_props, merged_required, ctx, imports,
-                                                         extra_defs=nested, strict=strict_opt)
+                class_def = _build_class_from_properties(inline_name, merged_props, merged_required, ctx, imports, extra_defs=nested, strict=strict_opt)
                 local_defs.extend(nested)
                 local_defs.append(class_def)
                 parts.append(inline_name)
                 continue
 
-            # fallback: unknown variant -> use Any
             imports.add("from typing import Any")
             parts.append("Any")
 
@@ -1044,15 +940,14 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
             if need_condecimal:
                 imports.add("from pydantic import condecimal")
 
-            # smart ordering:aliases/constrained types first
             def primitive_like(p: str) -> bool:
                 p = str(p)
                 return (
-                        p in ("int", "float", "str", "bool", "Any")
-                        or p.startswith("conint")
-                        or p.startswith("condecimal")
-                        or p.startswith("Literal[")
-                        or (p and p[0].isupper() and p != pascal_case(schema_name))
+                    p in ("int", "float", "str", "bool", "Any")
+                    or p.startswith("conint")
+                    or p.startswith("condecimal")
+                    or p.startswith("Literal[")
+                    or (p and p[0].isupper() and p != pascal_case(schema_name))
                 )
 
             ordered: List[str] = []
@@ -1064,12 +959,10 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     ordered.append(p)
 
             union_inner = ", ".join(ordered)
-            # add RootModel import so unions are wrapped as Pydantic RootModel classes
             imports.add("from pydantic import RootModel")
             import_block = "\n".join(sorted(imports))
             desc_block = f'"""{description}"""\n\n' if description else ""
             pre_defs = "".join(local_defs + extra_class_defs)
-            # emit a RootModel wrapper for the Union
             wrapper_def = f"class {pascal_case(schema_name)}(RootModel[Union[{union_inner}]]):\n    pass\n\n"
             return f"{desc_block}{import_block}\n\n\n{pre_defs}{wrapper_def}"
 
@@ -1135,9 +1028,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 class_def = f"class {pascal_case(schema_name)}(RootModel[str]):\n    pass\n\n"
                 import_block = "\n".join(sorted(imports))
                 return f"{desc}{import_block}\n\n\n{class_def}"
-
-            if schema_data.get("minLength") is not None or schema_data.get("maxLength") is not None or schema_data.get(
-                    "pattern") is not None:
+            if schema_data.get("minLength") is not None or schema_data.get("maxLength") is not None or schema_data.get("pattern") is not None:
                 imports.add("from pydantic import constr")
                 args = []
                 if schema_data.get("minLength") is not None:
@@ -1172,13 +1063,10 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
         class_body += "    pass\n"
 
     for field, fd in properties.items():
-        _, ann = get_python_type_and_string(field, fd.get("type"), fd, ctx, imports,
-                                            parent_name=pascal_case(schema_name), extra_defs=extra_class_defs)
+        _, ann = get_python_type_and_string(field, fd.get("type"), fd, ctx, imports, parent_name=pascal_case(schema_name), extra_defs=extra_class_defs)
 
-        # Determine if schema provides an explicit default (even if it is None)
         has_default = "default" in fd
         default = fd.get("default", None)
-
         desc_field = fd.get("description")
         is_req = field in required_fields
         if desc_field:
@@ -1186,25 +1074,16 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
         if fd.get("type") == "array":
             imports.add("from typing import List")
 
-        # Determine explicit nullability
         nullable = _is_nullable(fd)
 
-        # Handle mutable defaults (lists/dicts) with Field(default_factory=...)
         if has_default and _is_mutable_default(default):
             imports.add("from pydantic import Field")
             need_field_import = True
-
-            # If the field references a model (direct $ref/allOf-$ref) or is an array of $ref items,
-            # construct instances in the default factory instead of returning raw dict/list.
-            if fd.get("type") == "array" and isinstance(fd.get("items"), dict) and ("$ref" in fd.get("items") or (
-                    "allOf" in fd.get("items") and any(
-                isinstance(e, dict) and "$ref" in e for e in fd.get("items")["allOf"]))):
-                # list of model instances
+            if fd.get("type") == "array" and isinstance(fd.get("items"), dict) and ("$ref" in fd.get("items") or ("allOf" in fd.get("items") and any(isinstance(e, dict) and "$ref" in e for e in fd.get("items")["allOf"]))):
                 items = fd.get("items")
                 if "$ref" in items:
                     ref_model = pascal_case(items["$ref"].split("/")[-1])
                 else:
-                    # find first $ref in allOf
                     ref_model = None
                     for e in items.get("allOf", []):
                         if isinstance(e, dict) and "$ref" in e:
@@ -1216,11 +1095,9 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 if is_req:
                     class_body += f"    {field}: {ann} = Field(default_factory={factory})\n"
                 else:
-                    # if not required, but has a mutable default, we still emit optional annotation if schema says nullable
                     annotate = ann if not nullable else ensure_optional_annotation(ann)
                     class_body += f"    {field}: {annotate} = Field(default_factory={factory})\n"
             elif _field_is_ref_like(fd):
-                # single model instance from dict default
                 ctor = ann
                 factory = f"lambda: {ctor}(**{repr(default)})"
                 if is_req:
@@ -1229,16 +1106,13 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     annotate = ann if not nullable else ensure_optional_annotation(ann)
                     class_body += f"    {field}: {annotate} = Field(default_factory={factory})\n"
             else:
-                # plain mutable primitive default (list/dict/set) — keep literal
                 factory = f"lambda: {repr(default)}"
                 if is_req:
                     class_body += f"    {field}: {ann} = Field(default_factory={factory})\n"
                 else:
                     annotate = ann if not nullable else ensure_optional_annotation(ann)
                     class_body += f"    {field}: {annotate} = Field(default_factory={factory})\n"
-
         else:
-            # non-mutable default handling (including when schema explicitly sets default=None)
             if has_default and _field_is_ref_like(fd) and not _is_mutable_default(default):
                 imports.add("from pydantic import Field")
                 need_field_import = True
@@ -1246,7 +1120,6 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                 if is_req:
                     class_body += f"    {field}: {ann} = Field(default_factory=lambda: {ctor}({repr(default)}))\n"
                 else:
-                    # choose annotation: if default is None -> optional; else if schema nullable -> optional; else concrete
                     if default is None or nullable:
                         annotate = ensure_optional_annotation(ann)
                     else:
@@ -1259,31 +1132,26 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
                     else:
                         class_body += f"    {field}: {ann}\n"
                 else:
-                    # not required
                     if has_default:
                         if default is None:
                             annotate = ensure_optional_annotation(ann)
                             class_body += f"    {field}: {annotate} = {repr(default)}\n"
                         else:
-                            # default exists and not None: if schema nullable -> optional else concrete
                             annotate = ensure_optional_annotation(ann) if nullable else ann
                             class_body += f"    {field}: {annotate} = {repr(default)}\n"
                     else:
-                        # no default provided: make field omittable by emitting Optional[...] = None
                         if nullable:
                             annotate = ensure_optional_annotation(ann)
                         else:
                             annotate = ann
                         class_body += f"    {field}: {annotate} = None\n"
 
-        # patternProperties validator
         if fd.get("type") == "object" and "patternProperties" in fd:
             pattern = next(iter(fd["patternProperties"].keys()))
             imports.add("from pydantic import field_validator")
             need_validator_import = True
             validators.append(generate_pattern_properties_validator(field, pattern))
 
-        # datetime validator
         if ann == "datetime":
             imports.add("from pydantic import field_validator")
             need_validator_import = True
@@ -1299,7 +1167,6 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
     if need_field_import:
         imports.add("from pydantic import Field")
 
-    # assemble file: import block first, then any extra_class_defs (nested / aliases), then the main class
     import_block = "\n".join(sorted(imports))
     pre_defs = "".join(extra_class_defs)
     model_code = ""
@@ -1310,7 +1177,7 @@ def generate_model(schema_name: str, schema_data: Dict[str, Any], ctx: Generator
 
 
 # -------------------------
-# IO helpers
+# IO helpers (unchanged)
 # -------------------------
 def save_model_to_file(model_code: str, schema_name: str, out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
@@ -1318,15 +1185,11 @@ def save_model_to_file(model_code: str, schema_name: str, out_dir: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(model_code)
 
+
 def find_classes_and_aliases(path: str) -> List[str]:
-    """
-    Returns all class names and simple aliases (Name = Name) in a Python file.
-    """
     with open(path, "r", encoding="utf-8") as f:
         tree = ast.parse(f.read())
-
     names: List[str] = []
-
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             names.append(node.name)
@@ -1335,27 +1198,18 @@ def find_classes_and_aliases(path: str) -> List[str]:
                 target = node.targets[0].id
                 if isinstance(node.value, ast.Name):
                     names.append(target)
-
     return names
 
 
 def generate_models_init_py(models_dir: str) -> None:
-    """
-    Generate __init__.py including all classes and simple aliases.
-    """
     lines: List[str] = [
         "# GENERATED FILE — DO NOT EDIT MANUALLY",
         "# This file is re-generated by the model generator.",
         "from typing import TYPE_CHECKING",
         "",
     ]
-
-    py_files = [f for f in os.listdir(models_dir)
-                if f.endswith(".py") and f != "__init__.py"]
-
+    py_files = [f for f in os.listdir(models_dir) if f.endswith(".py") and f != "__init__.py"]
     all_classes: List[str] = []
-
-    # TYPE_CHECKING imports
     lines.append("if TYPE_CHECKING:")
     for py_file in py_files:
         mod_name = py_file[:-3]
@@ -1364,15 +1218,11 @@ def generate_models_init_py(models_dir: str) -> None:
         all_classes.extend(classes)
         for cls in classes:
             lines.append(f"    from .{mod_name} import {cls}")
-
-    # __all__ list
     lines.append("")
     lines.append("__all__ = [")
     for cls in sorted(all_classes):
         lines.append(f"    {cls!r},")
     lines.append("]")
-
-    # _CLASS_TO_MODULE mapping
     lines.append("")
     lines.append("_CLASS_TO_MODULE = {")
     for py_file in py_files:
@@ -1381,8 +1231,6 @@ def generate_models_init_py(models_dir: str) -> None:
         for cls in classes:
             lines.append(f"    {cls!r}: {mod_name!r},")
     lines.append("}")
-
-    # __getattr__ for lazy loading
     lines.append("")
     lines.append("def __getattr__(name: str):")
     lines.append("    if name in _CLASS_TO_MODULE:")
@@ -1393,30 +1241,22 @@ def generate_models_init_py(models_dir: str) -> None:
     lines.append("        globals()[name] = value")
     lines.append("        return value")
     lines.append("    raise AttributeError(name)")
-
-    # __dir__ for autocomplete
     lines.append("")
     lines.append("def __dir__():")
     lines.append("    return sorted(list(globals().keys()) + list(__all__))")
     lines.append("")
-
-    # write to __init__.py
     os.makedirs(models_dir, exist_ok=True)
     init_path = os.path.join(models_dir, "__init__.py")
     with open(init_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
-
     print(f"Generated __init__.py with {len(all_classes)} classes/aliases.")
-
 
 
 def delete_types(models_dir: str = "near_jsonrpc_models") -> None:
     if os.path.exists(models_dir):
         for filename in os.listdir(models_dir):
-
             if filename == 'strict_model.py':
                 continue
-
             file_path = os.path.join(models_dir, filename)
             if os.path.isfile(file_path):
                 os.remove(file_path)
@@ -1430,13 +1270,8 @@ def delete_types(models_dir: str = "near_jsonrpc_models") -> None:
 def generate_models(ctx, models_dir):
     models_path = Path(models_dir)
     models_path.mkdir(parents=True, exist_ok=True)
-
-    # generate each model
     for schema_name, schema_data in ctx.schemas.items():
         model_code = generate_model(schema_name, schema_data, ctx)
         save_model_to_file(model_code, schema_name, models_dir)
-
-    # generate __init__.py
     generate_models_init_py(models_dir=models_dir)
-
     print(f"✅ Models generated successfully")

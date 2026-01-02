@@ -1,3 +1,4 @@
 near_jsonrpc_client.egg-info/
 dist/
 build/
+.idea
