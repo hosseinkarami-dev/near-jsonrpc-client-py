@@ -1,9 +1,9 @@
 from .client import NearClientAsync, NearClientSync
 from .transport import HttpTransportAsync, HttpTransportSync
 from .errors import (
-    ClientError,
-    TransportError,
-    HttpError,
+    RpcClientError,
+    RpcTransportError,
+    RpcHttpError,
     RpcError,
     RpcTimeoutError
 )
@@ -19,9 +19,9 @@ __all__ = [
     "HttpTransportSync",
 
     # Errors
-    "ClientError",
-    "TransportError",
-    "HttpError",
+    "RpcClientError",
+    "RpcTransportError",
+    "RpcHttpError",
     "RpcError",
     "RpcTimeoutError"
 ]

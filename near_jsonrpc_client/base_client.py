@@ -7,11 +7,11 @@ from pydantic import BaseModel
 from typing import get_args
 
 from .errors import (
-    ClientError,
-    TransportError,
-    HttpError,
+    RpcClientError,
+    RpcTransportError,
+    RpcHttpError,
     RpcError,
-    RequestTimeoutError,
+    RpcTimeoutError,
 )
 from .transport import HttpTransportAsync, HttpTransportSync
 
@@ -19,13 +19,13 @@ from .transport import HttpTransportAsync, HttpTransportSync
 def _extract_method(request_model: Type[BaseModel]) -> str:
     field = request_model.model_fields.get("method")
     if field is None:
-        raise ClientError(
+        raise RpcClientError(
             f"{request_model.__name__} does not define a 'method' field"
         )
 
     args = get_args(field.annotation)
     if len(args) != 1 or not isinstance(args[0], str):
-        raise ClientError(
+        raise RpcClientError(
             f"Invalid JSON-RPC method definition in {request_model.__name__}"
         )
 
@@ -39,9 +39,9 @@ def _parse_response(response_model: Type[BaseModel], response_json: dict):
     except Exception as e:
 
         if response_json["result"]["error"] is not None:
-            raise ClientError(response_json["result"]["error"]) from e
+            raise RpcClientError(response_json["result"]["error"]) from e
 
-        raise ClientError("Invalid response format") from e
+        raise RpcClientError("Invalid response format") from e
 
     inner = parsed.root
     if hasattr(inner, "error") and inner.error is not None:
@@ -87,12 +87,12 @@ class NearBaseClientAsync:
                 print("⬅️ JSON-RPC Raw Response:", response.text)
 
         except httpx.TimeoutException as e:
-            raise RequestTimeoutError() from e
+            raise RpcTimeoutError() from e
         except httpx.RequestError as e:
-            raise TransportError(str(e)) from e
+            raise RpcTransportError(str(e)) from e
 
         if 500 <= response.status_code < 600:
-            raise HttpError(status_code=response.status_code, body=response.text)
+            raise RpcHttpError(status_code=response.status_code, body=response.text)
 
         return _parse_response(response_model, response.json())
 
@@ -139,12 +139,12 @@ class NearBaseClientSync:
 
         # handle sync transport exceptions (requests or httpx sync)
         except requests.Timeout as e:
-            raise RequestTimeoutError() from e
+            raise RpcTimeoutError() from e
         except requests.RequestException as e:
-            raise TransportError(str(e)) from e
+            raise RpcTransportError(str(e)) from e
 
         if 500 <= response.status_code < 600:
-            raise HttpError(status_code=response.status_code, body=response.text)
+            raise RpcHttpError(status_code=response.status_code, body=response.text)
 
         return _parse_response(response_model, response.json())
 

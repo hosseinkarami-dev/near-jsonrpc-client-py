@@ -1,8 +1,8 @@
 import asyncio
-from near_jsonrpc_client import NearClientAsync, ClientError, RpcError, HttpError, RequestTimeoutError
-from near_jsonrpc_models import RpcBlockRequest, BlockId, CryptoHash, BlockIdBlockHeight, BlockIdCryptoHash, \
-    RpcBlockRequestBlockId, RpcBlockRequestFinality, RpcTransactionStatusRequest, \
-    RpcTransactionStatusRequestOption2Option, AccountId
+
+from near_jsonrpc_client import NearClientAsync, RpcClientError, RpcError, RpcHttpError, RpcTimeoutError
+from near_jsonrpc_models import CryptoHash, RpcTransactionStatusRequest, AccountId, \
+    RpcTransactionStatusRequestSenderAccountIdTxHash
 
 
 async def main():
@@ -10,7 +10,7 @@ async def main():
 
     try:
         params = RpcTransactionStatusRequest(
-            RpcTransactionStatusRequestOption2Option(
+            RpcTransactionStatusRequestSenderAccountIdTxHash(
                 sender_account_id=AccountId("sweat-relayer.near").root,
                 tx_hash=CryptoHash("B4PGu3RicwMrjhv4k4MGaUhnZrTqPrrRu5gH9jxtHH4J").root,
                 wait_until='EXECUTED_OPTIMISTIC'
@@ -22,11 +22,11 @@ async def main():
 
     except RpcError as e:
         print(f"{e}: {e.error}")
-    except RequestTimeoutError as e:
+    except RpcTimeoutError as e:
         print(f"{e}")
-    except HttpError as e:
+    except RpcHttpError as e:
         print(f"{e}: status: {e.status_code}, body: {e.body}")
-    except ClientError as e:
+    except RpcClientError as e:
         print("Invalid response:", e)
     await client.close()
 

@@ -1,17 +1,17 @@
 from pydantic import BaseModel
 
 
-class ClientError(Exception):
+class RpcClientError(Exception):
     """Base error for all NEAR client related failures."""
     pass
 
 
-class TransportError(ClientError):
+class RpcTransportError(RpcClientError):
     """Network-level errors (timeout, DNS, connection, etc)."""
     pass
 
 
-class HttpError(ClientError):
+class RpcHttpError(RpcClientError):
     """Non-200 HTTP responses."""
 
     def __init__(self, status_code: int, body: str | None = None):
@@ -20,7 +20,7 @@ class HttpError(ClientError):
         super().__init__(f"HTTP error {status_code}")
 
 
-class RpcError(ClientError):
+class RpcError(RpcClientError):
     """JSON-RPC error object wrapping the Pydantic error model."""
 
     def __init__(self, error: BaseModel | str):
@@ -32,7 +32,7 @@ class RpcError(ClientError):
             super().__init__(error)
 
 
-class RpcTimeoutError(ClientError):
+class RpcTimeoutError(RpcClientError):
     """Timeout Error"""
 
     def __init__(self):

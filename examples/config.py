@@ -1,4 +1,4 @@
-from near_jsonrpc_client import RequestTimeoutError, NearClientSync, ClientError, RpcError, HttpError
+from near_jsonrpc_client import RpcTimeoutError, NearClientSync, RpcClientError, RpcError, RpcHttpError
 
 
 def main():
@@ -13,9 +13,9 @@ def main():
 
     except RpcError as e:
         print(f"{e}: {e.error}")
-    except HttpError as e:
+    except RpcHttpError as e:
         print(f"{e}: status: {e.status_code}, body: {e.body}")
-    except ClientError as e:
+    except RpcClientError as e:
         print("Invalid response:", e)
     finally:
         client.close()

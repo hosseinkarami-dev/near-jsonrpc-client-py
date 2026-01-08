@@ -1,5 +1,5 @@
 import asyncio
-from near_jsonrpc_client import NearClientAsync, ClientError, RpcError, HttpError, RequestTimeoutError
+from near_jsonrpc_client import NearClientAsync, RpcClientError, RpcError, RpcHttpError, RpcTimeoutError
 from near_jsonrpc_models import RpcQueryRequest, AccountId, FunctionArgs, RpcQueryRequestCallFunctionByFinality, \
     RpcQueryRequestViewAccountByFinality, Finality
 
@@ -23,11 +23,11 @@ async def main():
 
     except RpcError as e:
         print(f"{e}: {e.error}")
-    except RequestTimeoutError as e:
+    except RpcTimeoutError as e:
         print(f"{e}")
-    except HttpError as e:
+    except RpcHttpError as e:
         print(f"{e}: status: {e.status_code}, body: {e.body}")
-    except ClientError as e:
+    except RpcClientError as e:
         print("Invalid response:", e)
 
     try:
@@ -44,11 +44,11 @@ async def main():
 
     except RpcError as e:
         print(f"{e}: {e.error}")
-    except RequestTimeoutError as e:
+    except RpcTimeoutError as e:
         print(f"{e}")
-    except HttpError as e:
+    except RpcHttpError as e:
         print(f"{e}: status: {e.status_code}, body: {e.body}")
-    except ClientError as e:
+    except RpcClientError as e:
         print("Invalid response:", e)
 
     await client.close()

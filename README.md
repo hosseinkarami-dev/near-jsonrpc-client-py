@@ -162,24 +162,24 @@ print(response)
 The client raises structured exceptions:
 
 * `RpcError` – returned from NEAR JSON-RPC
-* `HttpError` – HTTP errors with status code and body
-* `RequestTimeoutError` – request timeout
-* `ClientError` – unexpected or invalid responses
+* `RpcHttpError` – HTTP errors with status code and body
+* `RpcTimeoutError` – request timeout
+* `RpcClientError` – unexpected or invalid responses
 
 Example:
 
 ```python
-from near_jsonrpc_client import RpcError, HttpError, RequestTimeoutError, ClientError
+from near_jsonrpc_client import RpcError, RpcHttpError, RpcTimeoutError, RpcClientError
 
 try:
     block = client.block(params=params)
 except RpcError as e:
     print(f"RPC error: {e.error}")
-except HttpError as e:
+except RpcHttpError as e:
     print(f"HTTP error: {e.status_code}, {e.body}")
-except RequestTimeoutError as e:
+except RpcTimeoutError as e:
     print("Request timed out")
-except ClientError as e:
+except RpcClientError as e:
     print("Invalid response", e)
 ```
 
