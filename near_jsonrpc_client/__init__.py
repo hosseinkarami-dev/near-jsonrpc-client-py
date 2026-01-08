@@ -5,7 +5,7 @@ from .errors import (
     TransportError,
     HttpError,
     RpcError,
-    RequestTimeoutError
+    RpcTimeoutError
 )
 
 __all__ = [
